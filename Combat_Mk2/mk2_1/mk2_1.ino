@@ -2,10 +2,13 @@
 
 #include <LedControl.h>
 
-#define DIN 4
-#define CS 3
-#define CLK 2
+//Important pins
+#define TR_PIN 2
+#define DIN 5
+#define CS 6
+#define CLK 7
 
+//Create matrix
 LedControl my_matrix = LedControl(DIN, CLK, CS, 1);
 
 //Set of different hand signs
@@ -93,42 +96,52 @@ int midfin[8]   = {0b00001000,
 //Collection of all symbols
 int *symbols[8] = {forward, shoot, wait, like, search, move_all, surrender, midfin};
 
+//Constants
+//Simple moving average
+const int num_samples = 50;
+//Exp moving average
+const float rate = 0.2;
+//Sensors
+const int num_sensors = 5;
+const int sensor_pins[num_sensors] = {A0, A1, A2, A3, A4};
+
 //Variables
-int a = 0;
-int curr = 0;
-float rate = 0.2;
-int state = 0;
+int char_index = 0;
+int sensor_data[num_sensors] = {0,0,0,0,0};
+
+//Function declarations
+int get_conditioned(int pin_num, int prev_val);
+void draw_char(int to_draw[8]);
+void isr();
 
 void setup() 
 {
-  //Initialize
+  //Attach interrupt
+  attachInterrupt(digitalPinToInterrupt(TR_PIN), isr, FALLING);
+  //Initialize matrix
   my_matrix.shutdown(0, false);
   my_matrix.setIntensity(0, 0);
   my_matrix.clearDisplay(0);
+  //Start serial
   Serial.begin(9600);
+  Serial.println("Combat Geture Recognition Mk.II");
+  Serial.println("Author: Guining 'Otoshuki' Pertin");
 }
 
 void loop() 
 {
-//  for(int i=0; i<8; i++)
-//  {
-//    draw_char(symbols[i]);
-//    delay(1000); 
-//  }
-
-  //Moving average
-  a = 0;
-  for (int i=0; i<100; i++)
+  //Get data from 5 sensors
+  for(int sen_id=0; sen_id<num_sensors; sen_id++)
   {
-    a += analogRead(A0);
+    sensor_data[sen_id] = get_conditioned(sensor_pins[sen_id], sensor_data[sen_id]);
   }
-  //Exponential moving average
-  curr = rate*a/100 + (1-rate)*curr;
-  
-  Serial.println(curr);
-  if (curr < 100) draw_char(search);
-  else my_matrix.clearDisplay(0);
-//  Serial.print('\t');
+  //Print all the data
+  for(int sen_id=0; sen_id<num_sensors; sen_id++)
+  {
+    Serial.print(sensor_data[sen_id]);
+    Serial.print("\t");
+  }
+  Serial.print("\n");
 }
 
 //Helper function to draw the symbol
@@ -138,4 +151,25 @@ void draw_char(int to_draw[8])
   {
     my_matrix.setRow(0, i, to_draw[i]);
   }
+}
+
+//Interrupt Service Routine
+void isr()
+{
+  if (char_index>=7) char_index = 0;
+  else char_index++;
+  Serial.println(char_index);
+}
+
+//Signal conditioning function
+int get_conditioned(int pin_num, int prev_val)
+{
+  int samples = 0;
+  //Perform simple moving average
+  for (int i=0; i<num_samples; i++)
+  {
+    samples += analogRead(pin_num);
+  }
+  //Return the exponential moving average
+  return rate*samples/num_samples + (1-rate)*prev_val;   
 }
