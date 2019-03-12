@@ -108,6 +108,7 @@ const int sensor_pins[num_sensors] = {A0, A1, A2, A3, A4};
 //Variables
 int char_index = 0;
 int sensor_data[num_sensors] = {0,0,0,0,0};
+char to_print[8];
 
 //Function declarations
 int get_conditioned(int pin_num, int prev_val);
@@ -124,8 +125,6 @@ void setup()
   my_matrix.clearDisplay(0);
   //Start serial
   Serial.begin(9600);
-  Serial.println("Combat Geture Recognition Mk.II");
-  Serial.println("Author: Guining 'Otoshuki' Pertin");
 }
 
 void loop() 
@@ -138,7 +137,8 @@ void loop()
   //Print all the data
   for(int sen_id=0; sen_id<num_sensors; sen_id++)
   {
-    Serial.print(sensor_data[sen_id]);
+    //Normalizing data between 0 and 100 for use
+    Serial.print(map(sensor_data[sen_id], 0, 300, 0, 100));
     Serial.print("\t");
   }
   Serial.print("\n");
