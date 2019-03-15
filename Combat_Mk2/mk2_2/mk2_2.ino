@@ -1,4 +1,8 @@
-//Guining Pertin - 10-03-19
+//Guining Pertin - 13-3-19
+//Assumes Gaussian distribution of features
+//Assumes equiprobable symbols
+//Assumes independent features
+//Uses Naive Bayes with MAP rule for decision
 
 #include <LedControl.h>
 
@@ -129,30 +133,29 @@ const int sensor_pins[num_sensors] = {A0, A1, A2, A3, A4};
 int char_index = 0;
 int sensor_data[num_sensors] = {0,0,0,0,0};
 char to_print[8];
-//Gaussian fit
+//Gaussian fit - 5D means and variances
 unsigned int calib_means[8][num_sensors];
+unsigned int calib_stds[8][num_sensors];
 //Calibration
 bool calib_state = false;
 
 //Function declarations
 int get_conditioned(int pin_num, int prev_val);
 void draw_char(int to_draw[8]);
-int perform_calib();
+void fit_gaussian(int y_j);
+void perform_calib();
 void isr();
 
 void setup() 
 {
   //Attach interrupt
   attachInterrupt(digitalPinToInterrupt(TR_PIN), isr, FALLING);
-//  pinMode(TR_PIN, INPUT);
   //Initialize matrix
   my_matrix.shutdown(0, false);
   my_matrix.setIntensity(0, 0);
   my_matrix.clearDisplay(0);
   //Start serial
   Serial.begin(9600);
-  //Perform calibration at the beginning
-//  perform_calib();
 }
 
 void loop() 
@@ -163,15 +166,10 @@ void loop()
   for(int sen_id=0; sen_id<num_sensors; sen_id++)
   {
     sensor_data[sen_id] = get_conditioned(sensor_pins[sen_id], sensor_data[sen_id]);
-//    Serial.print(sensor_data[sen_id]);
-//    Serial.print('\t');
   }
-//  Serial.print('\n');
-  //Predict current symbol
-  int curr_symbol = predict_symbol();
+  //Predict current symbol using Naive Bayes with MAP rule
+  int curr_symbol = naive_predict();
   draw_char(symbols[curr_symbol]);
-//  Serial.println(curr_symbol);
-//  delay(500);
 }
 
 //Helper function to draw the symbol
@@ -202,51 +200,69 @@ int get_conditioned(int pin_num, int prev_val)
   return rate*samples/num_samples + (1-rate)*prev_val;   
 }
 
-//Calibration function for users
-int perform_calib()
+//Gaussian fitting for each symbol/class
+void fit_gaussian(int y_j)
 {
-//  Serial.println("Performing calibration");
-  //For each symbol
-  for (int sym_id=0; sym_id<8; sym_id++)
-  {
-    //First, show calibration logo
-    for(int i=0; i<9; i++)
-      {
-        draw_char(load);
-        load[3] += 0b10000000>>i;
-        load[4] += 0b10000000>>i;
-        delay(200);
-      }
-    load[3] = 0b00000000;
-    load[4] = 0b00000000;
-    draw_char(symbols[sym_id]);
-    delay(1000);
-    unsigned int char_data[num_sensors][100] = {0};
-    unsigned int char_mean[num_sensors] = {0};
-    //Get 100 samples
-    for(int i=0; i<100; i++)
+  //First, show calibration logo
+  for(int i=0; i<9; i++)
     {
-      //For each sensor
-      for(int sen_id=0; sen_id<num_sensors; sen_id++)
-      {
-        char_data[sen_id][i] = map(analogRead(sensor_pins[sen_id]),0,300,0,300);
-        //Fitting normalized mean onto the sample
-        char_mean[sen_id] += char_data[sen_id][i];
-        delay(5);
-//        Serial.print(char_data[sen_id][i]);
-//        Serial.print("\t");
-      }
-//      Serial.print("\n");
+      draw_char(load);
+      load[3] += 0b10000000>>i;
+      load[4] += 0b10000000>>i;
+      delay(200);
     }
-    //Fit Gaussian onto the samples
-    //Calculate empirical 5D mean and save it for the character
+  load[3] = 0b00000000;
+  load[4] = 0b00000000;
+  draw_char(symbols[y_j]);
+  delay(1000);
+
+  //Variables to store sampled data
+  //We don't need very high precision, int will suffice
+  //We are using mean and std
+  //Calculating std*std for variance is easier than root(std) for every prediction
+  unsigned int char_data[num_sensors][100] = {0};
+  unsigned int char_mean[num_sensors] = {0};
+  unsigned int char_std[num_sensors] = {0};
+  //Get 100 samples
+  for(int i=0; i<100; i++)
+  {
+    //For each sensor
     for(int sen_id=0; sen_id<num_sensors; sen_id++)
     {
-      calib_means[sym_id][sen_id] = char_mean[sen_id]/100;
-//      Serial.print(calib_means[sym_id][sen_id]);
-//      Serial.print('\t');
+      char_data[sen_id][i] = map(analogRead(sensor_pins[sen_id]),0,300,0,300);
+      //Fitting normalized mean onto the sample
+      char_mean[sen_id] += char_data[sen_id][i];
+      delay(5);
     }
-//    Serial.println('\n');
+  }
+  //We have the samples x_i and the means u_x_i for each sensor i
+  //Calculate variances for each feature
+  for(int sen_id=0; sen_id<num_sensors; sen_id++)
+  {
+     //Empirical variance over all samples
+     for(int i=0; i<100; i++)
+     {
+        //Get sum(x_i - u_x_i)^2
+        char_std[sen_id] += pow(char_data[sen_id][i] - char_mean[sen_id]/100, 2);
+     }
+     //Std_dev = sqrt(variance), variance by n-1
+     char_std[sen_id] = pow(char_std[sen_id]/99, 0.5);
+  }
+  //Store the data for given character
+  for(int sen_id=0; sen_id<num_sensors; sen_id++)
+  {
+    calib_means[y_j][sen_id] = char_mean[sen_id]/100;
+    calib_stds[y_j][sen_id] = char_std[sen_id];
+  }
+}
+
+//Perform gaussian fit for each symbol
+void perform_calib()
+{
+  //For each symbol gaussian fit
+  for(int sym_id=0; sym_id<8; sym_id++)
+  {
+    fit_gaussian(sym_id);
   }
   //Set back the state
   draw_char(done);
@@ -254,27 +270,40 @@ int perform_calib()
   delay(1000);
 }
 
-//Prediction
-int predict_symbol()
+//PDF given mu and std
+float gaussian_func(int x, int mu, int std)
 {
-  float min_dist = 10000;
-  int predicted = 0;
-  //For all symbols
-  for(int sym_id=0; sym_id<8; sym_id++)
+  //No need to recalculate this over and over
+  static const float inv_sqrt_2pi = 0.3989422804014327;
+  float a = (x - mu)/std;
+  return inv_sqrt_2pi/std * exp(-0.5f*a*a);
+}
+
+//Naive Bayes classification
+int naive_predict()
+{
+  //Consider equiprobable classes, we don't need prior
+  //We only need argmax over the conditionals
+  int argmax = 0;
+  float max_p = 0;
+  //For each class
+  for(int y_j=0; y_j<8; y_j++)
   {
-    float dist = 0;
-    //Get L2 distance
-    for(int sen_id=0; sen_id<num_sensors; sen_id++)
+    float prob_for_y_j = 1;
+    //Get product over conditionals
+    for (int x_i=0; x_i<num_sensors; x_i++)
     {
-      dist += pow(calib_means[sym_id][sen_id] - map(sensor_data[sen_id],0,300,0,300), 2);
+      //Get sample
+      int x = map(sensor_data[x_i],0,300,0,300);
+      prob_for_y_j *= gaussian_func(x, calib_means[y_j][x_i], calib_stds[y_j][x_i]);
     }
-    dist = sqrt(dist);
-    //If this is the minimum distance
-    if(dist<min_dist)
+    //Get max and argmax
+    if (prob_for_y_j > max_p)
     {
-      min_dist = dist;
-      predicted = sym_id;
+      //If curr is max, change max and argmax
+      max_p = prob_for_y_j;
+      argmax = y_j;
     }
   }
-  return predicted;
+  return argmax;
 }
